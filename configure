@@ -11468,7 +11468,7 @@ else
 fi
 
 if test "${enable_fts3}" = "yes" ; then
-  OPT_FEATURE_FLAGS="${OPT_FEATURE_FLAGS} -DSQLITE_ENABLE_FTS3"
+  OPT_FEATURE_FLAGS="${OPT_FEATURE_FLAGS} -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS"
 fi
 # Check whether --enable-fts4 was given.
 if test "${enable_fts4+set}" = set; then :
