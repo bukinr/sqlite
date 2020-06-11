@@ -1729,6 +1729,7 @@ static int vdbeSorterFlushPMA(VdbeSorter *pSorter){
     }else{
       /* Launch a background thread for this operation */
       u8 *aMem = pTask->list.aMemory;
+      assert( EIGHT_BYTE_ALIGNMENT(aMem) );
       void *pCtx = (void*)pTask;
 
       assert( pTask->pThread==0 && pTask->bDone==0 );

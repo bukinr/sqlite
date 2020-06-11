@@ -194,6 +194,7 @@ struct sqlite3_value {
     FuncDef *pDef;      /* Used only when flags==MEM_Agg */
     RowSet *pRowSet;    /* Used only when flags==MEM_RowSet */
     VdbeFrame *pFrame;  /* Used when flags==MEM_Frame */
+    _Alignas(SQLITE_DEFAULT_ALIGNMENT) char ensureAlignment;
   } u;
   u16 flags;          /* Some combination of MEM_Null, MEM_Str, MEM_Dyn, etc. */
   u8  enc;            /* SQLITE_UTF8, SQLITE_UTF16BE, SQLITE_UTF16LE */
