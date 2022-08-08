@@ -1550,7 +1550,6 @@ void sqlite3Pragma(
 
         if( pTab->tnum<1 ) continue;  /* Skip VIEWs or VIRTUAL TABLEs */
         pPk = HasRowid(pTab) ? 0 : sqlite3PrimaryKeyIndex(pTab);
-        sqlite3ExprCacheClear(pParse);
         sqlite3OpenTableAndIndices(pParse, pTab, OP_OpenRead, 0,
                                    1, 0, &iDataCur, &iIdxCur);
         /* reg[7] counts the number of entries in the table.
@@ -1564,6 +1563,11 @@ void sqlite3Pragma(
         assert( sqlite3NoTempsInRange(pParse,1,7+j) );
         sqlite3VdbeAddOp2(v, OP_Rewind, iDataCur, 0); VdbeCoverage(v);
         loopTop = sqlite3VdbeAddOp2(v, OP_AddImm, 7, 1);
+        if( !isQuick ){
+          /* Sanity check on record header decoding */
+          sqlite3VdbeAddOp3(v, OP_Column, iDataCur, pTab->nCol-1, 3);
+          sqlite3VdbeChangeP5(v, OPFLAG_TYPEOFARG);
+        }
         /* Verify that all NOT NULL columns really are NOT NULL */
         for(j=0; j<pTab->nCol; j++){
           char *zErr;
@@ -1588,7 +1592,6 @@ void sqlite3Pragma(
             char *zErr;
             int k;
             pParse->iSelfTab = iDataCur + 1;
-            sqlite3ExprCachePush(pParse);
             for(k=pCheck->nExpr-1; k>0; k--){
               sqlite3ExprIfFalse(pParse, pCheck->a[k].pExpr, addrCkFault, 0);
             }
@@ -1601,14 +1604,10 @@ void sqlite3Pragma(
             sqlite3VdbeAddOp4(v, OP_String8, 0, 3, 0, zErr, P4_DYNAMIC);
             integrityCheckResultRow(v);
             sqlite3VdbeResolveLabel(v, addrCkOk);
-            sqlite3ExprCachePop(pParse);
           }
           sqlite3ExprListDelete(db, pCheck);
         }
         if( !isQuick ){ /* Omit the remaining tests for quick_check */
-          /* Sanity check on record header decoding */
-          sqlite3VdbeAddOp3(v, OP_Column, iDataCur, pTab->nCol-1, 3);
-          sqlite3VdbeChangeP5(v, OPFLAG_TYPEOFARG);
           /* Validate index entries for the current row */
           for(j=0, pIdx=pTab->pIndex; pIdx; pIdx=pIdx->pNext, j++){
             int jmp2, jmp3, jmp4, jmp5;
@@ -2216,26 +2215,25 @@ static int pragmaVtabConnect(
   UNUSED_PARAMETER(argc);
   UNUSED_PARAMETER(argv);
   sqlite3StrAccumInit(&acc, 0, zBuf, sizeof(zBuf), 0);
-  sqlite3StrAccumAppendAll(&acc, "CREATE TABLE x");
+  sqlite3_str_appendall(&acc, "CREATE TABLE x");
   for(i=0, j=pPragma->iPragCName; i<pPragma->nPragCName; i++, j++){
-    sqlite3XPrintf(&acc, "%c\"%s\"", cSep, pragCName[j]);
+    sqlite3_str_appendf(&acc, "%c\"%s\"", cSep, pragCName[j]);
     cSep = ',';
   }
   if( i==0 ){
-    sqlite3XPrintf(&acc, "(\"%s\"", pPragma->zName);
-    cSep = ',';
+    sqlite3_str_appendf(&acc, "(\"%s\"", pPragma->zName);
     i++;
   }
   j = 0;
   if( pPragma->mPragFlg & PragFlg_Result1 ){
-    sqlite3StrAccumAppendAll(&acc, ",arg HIDDEN");
+    sqlite3_str_appendall(&acc, ",arg HIDDEN");
     j++;
   }
   if( pPragma->mPragFlg & (PragFlg_SchemaOpt|PragFlg_SchemaReq) ){
-    sqlite3StrAccumAppendAll(&acc, ",schema HIDDEN");
+    sqlite3_str_appendall(&acc, ",schema HIDDEN");
     j++;
   }
-  sqlite3StrAccumAppend(&acc, ")", 1);
+  sqlite3_str_append(&acc, ")", 1);
   sqlite3StrAccumFinish(&acc);
   assert( strlen(zBuf) < sizeof(zBuf)-1 );
   rc = sqlite3_declare_vtab(db, zBuf);
@@ -2387,13 +2385,13 @@ static int pragmaVtabFilter(
     }
   }
   sqlite3StrAccumInit(&acc, 0, 0, 0, pTab->db->aLimit[SQLITE_LIMIT_SQL_LENGTH]);
-  sqlite3StrAccumAppendAll(&acc, "PRAGMA ");
+  sqlite3_str_appendall(&acc, "PRAGMA ");
   if( pCsr->azArg[1] ){
-    sqlite3XPrintf(&acc, "%Q.", pCsr->azArg[1]);
+    sqlite3_str_appendf(&acc, "%Q.", pCsr->azArg[1]);
   }
-  sqlite3StrAccumAppendAll(&acc, pTab->pName->zName);
+  sqlite3_str_appendall(&acc, pTab->pName->zName);
   if( pCsr->azArg[0] ){
-    sqlite3XPrintf(&acc, "=%Q", pCsr->azArg[0]);
+    sqlite3_str_appendf(&acc, "=%Q", pCsr->azArg[0]);
   }
   zSql = sqlite3StrAccumFinish(&acc);
   if( zSql==0 ) return SQLITE_NOMEM;

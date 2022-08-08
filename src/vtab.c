@@ -262,7 +262,7 @@ void sqlite3VtabUnlockList(sqlite3 *db){
   assert( sqlite3_mutex_held(db->mutex) );
 
   if( p ){
-    sqlite3ExpirePreparedStatements(db);
+    sqlite3ExpirePreparedStatements(db, 0);
     do {
       VTable *pNext = p->pNext;
       sqlite3VtabUnlock(p);
@@ -758,7 +758,7 @@ int sqlite3_declare_vtab(sqlite3 *db, const char *zCreateTable){
   assert( IsVirtual(pTab) );
 
   memset(&sParse, 0, sizeof(sParse));
-  sParse.declareVtab = 1;
+  sParse.eParseMode = PARSE_MODE_DECLARE_VTAB;
   sParse.db = db;
   sParse.nQueryLoop = 1;
   if( SQLITE_OK==sqlite3RunParser(&sParse, zCreateTable, &zErr) 
@@ -799,7 +799,7 @@ int sqlite3_declare_vtab(sqlite3 *db, const char *zCreateTable){
     sqlite3DbFree(db, zErr);
     rc = SQLITE_ERROR;
   }
-  sParse.declareVtab = 0;
+  sParse.eParseMode = PARSE_MODE_NORMAL;
 
   if( sParse.pVdbe ){
     sqlite3VdbeFinalize(sParse.pVdbe);
@@ -1049,9 +1049,6 @@ FuncDef *sqlite3VtabOverloadFunction(
   void *pArg = 0;
   FuncDef *pNew;
   int rc = 0;
-  char *zLowerName;
-  unsigned char *z;
-
 
   /* Check to see the left operand is a column in a virtual table */
   if( NEVER(pExpr==0) ) return pDef;
@@ -1066,16 +1063,22 @@ FuncDef *sqlite3VtabOverloadFunction(
   if( pMod->xFindFunction==0 ) return pDef;
  
   /* Call the xFindFunction method on the virtual table implementation
-  ** to see if the implementation wants to overload this function 
+  ** to see if the implementation wants to overload this function.
+  **
+  ** Though undocumented, we have historically always invoked xFindFunction
+  ** with an all lower-case function name.  Continue in this tradition to
+  ** avoid any chance of an incompatibility.
   */
-  zLowerName = sqlite3DbStrDup(db, pDef->zName);
-  if( zLowerName ){
-    for(z=(unsigned char*)zLowerName; *z; z++){
-      *z = sqlite3UpperToLower[*z];
+#ifdef SQLITE_DEBUG
+  {
+    int i;
+    for(i=0; pDef->zName[i]; i++){
+      unsigned char x = (unsigned char)pDef->zName[i];
+      assert( x==sqlite3UpperToLower[x] );
     }
-    rc = pMod->xFindFunction(pVtab, nArg, zLowerName, &xSFunc, &pArg);
-    sqlite3DbFree(db, zLowerName);
   }
+#endif
+  rc = pMod->xFindFunction(pVtab, nArg, pDef->zName, &xSFunc, &pArg);
   if( rc==0 ){
     return pDef;
   }

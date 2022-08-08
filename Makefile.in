@@ -187,10 +187,10 @@ LIBOBJS0 = alter.lo analyze.lo attach.lo auth.lo \
          random.lo resolve.lo rowset.lo rtree.lo \
          sqlite3session.lo select.lo sqlite3rbu.lo status.lo stmt.lo \
          table.lo threads.lo tokenize.lo treeview.lo trigger.lo \
-         update.lo util.lo vacuum.lo \
+         update.lo upsert.lo util.lo vacuum.lo \
          vdbe.lo vdbeapi.lo vdbeaux.lo vdbeblob.lo vdbemem.lo vdbesort.lo \
          vdbetrace.lo wal.lo walker.lo where.lo wherecode.lo whereexpr.lo \
-         utf.lo vtab.lo
+         window.lo utf.lo vtab.lo
 
 # Object files for the amalgamation.
 #
@@ -284,6 +284,7 @@ SRC = \
   $(TOP)/src/trigger.c \
   $(TOP)/src/utf.c \
   $(TOP)/src/update.c \
+  $(TOP)/src/upsert.c \
   $(TOP)/src/util.c \
   $(TOP)/src/vacuum.c \
   $(TOP)/src/vdbe.c \
@@ -303,7 +304,8 @@ SRC = \
   $(TOP)/src/where.c \
   $(TOP)/src/wherecode.c \
   $(TOP)/src/whereexpr.c \
-  $(TOP)/src/whereInt.h
+  $(TOP)/src/whereInt.h \
+  $(TOP)/src/window.c
 
 # Source code for extensions
 #
@@ -348,7 +350,8 @@ SRC += \
   $(TOP)/ext/icu/icu.c
 SRC += \
   $(TOP)/ext/rtree/rtree.h \
-  $(TOP)/ext/rtree/rtree.c
+  $(TOP)/ext/rtree/rtree.c \
+  $(TOP)/ext/rtree/geopoly.c
 SRC += \
   $(TOP)/ext/session/sqlite3session.c \
   $(TOP)/ext/session/sqlite3session.h
@@ -417,6 +420,7 @@ TESTSRC = \
   $(TOP)/src/test_thread.c \
   $(TOP)/src/test_vfs.c \
   $(TOP)/src/test_windirent.c \
+  $(TOP)/src/test_window.c \
   $(TOP)/src/test_wsd.c       \
   $(TOP)/ext/fts3/fts3_term.c \
   $(TOP)/ext/fts3/fts3_test.c  \
@@ -492,6 +496,7 @@ TESTSRC2 = \
   $(TOP)/src/where.c \
   $(TOP)/src/wherecode.c \
   $(TOP)/src/whereexpr.c \
+  $(TOP)/src/window.c \
   parse.c \
   $(TOP)/ext/fts3/fts3.c \
   $(TOP)/ext/fts3/fts3_aux.c \
@@ -548,7 +553,8 @@ EXTHDR += \
   $(TOP)/ext/fts3/fts3_hash.h \
   $(TOP)/ext/fts3/fts3_tokenizer.h
 EXTHDR += \
-  $(TOP)/ext/rtree/rtree.h
+  $(TOP)/ext/rtree/rtree.h \
+  $(TOP)/ext/rtree/geopoly.c
 EXTHDR += \
   $(TOP)/ext/icu/sqliteicu.h
 EXTHDR += \
@@ -571,7 +577,8 @@ FUZZDATA = \
   $(TOP)/test/fuzzdata2.db \
   $(TOP)/test/fuzzdata3.db \
   $(TOP)/test/fuzzdata4.db \
-  $(TOP)/test/fuzzdata5.db
+  $(TOP)/test/fuzzdata5.db \
+  $(TOP)/test/fuzzdata6.db
 
 # Standard options to testfixture
 #
@@ -914,6 +921,9 @@ trigger.lo:	$(TOP)/src/trigger.c $(HDR)
 update.lo:	$(TOP)/src/update.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/update.c
 
+upsert.lo:	$(TOP)/src/upsert.c $(HDR)
+	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/upsert.c
+
 utf.lo:	$(TOP)/src/utf.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/utf.c
 
@@ -961,6 +971,9 @@ wherecode.lo:	$(TOP)/src/wherecode.c $(HDR)
 
 whereexpr.lo:	$(TOP)/src/whereexpr.c $(HDR)
 	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/whereexpr.c
+
+window.lo:	$(TOP)/src/window.c $(HDR)
+	$(LTCOMPILE) $(TEMP_STORE) -c $(TOP)/src/window.c
 
 tclsqlite.lo:	$(TOP)/src/tclsqlite.c $(HDR)
 	$(LTCOMPILE) -DUSE_TCL_STUBS=1 -c $(TOP)/src/tclsqlite.c
@@ -1264,6 +1277,9 @@ changeset$(TEXE):	$(TOP)/ext/session/changeset.c sqlite3.lo
 
 rollback-test$(TEXE):	$(TOP)/tool/rollback-test.c sqlite3.lo
 	$(LTLINK) -o $@ $(TOP)/tool/rollback-test.c sqlite3.lo $(TLIBS)
+
+atrc$(TEXX): $(TOP)/test/atrc.c sqlite3.lo
+	$(LTLINK) -o $@ $(TOP)/test/atrc.c sqlite3.lo $(TLIBS)
 
 LogEst$(TEXE):	$(TOP)/tool/logest.c sqlite3.h
 	$(LTLINK) -I. -o $@ $(TOP)/tool/logest.c

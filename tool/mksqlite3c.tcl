@@ -99,6 +99,7 @@ foreach hdr {
    fts3Int.h
    fts3_hash.h
    fts3_tokenizer.h
+   geopoly.c
    hash.h
    hwtime.h
    keywordhash.h
@@ -363,11 +364,13 @@ foreach file {
    table.c
    trigger.c
    update.c
+   upsert.c
    vacuum.c
    vtab.c
    wherecode.c
    whereexpr.c
    where.c
+   window.c
 
    parse.c
 
@@ -390,6 +393,7 @@ foreach file {
    fts3_unicode.c
    fts3_unicode2.c
 
+   json1.c
    rtree.c
    icu.c
    fts3_icu.c
@@ -397,7 +401,6 @@ foreach file {
    dbstat.c
    dbpage.c
    sqlite3session.c
-   json1.c
    fts5.c
    stmt.c
 } {
