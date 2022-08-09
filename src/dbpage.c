@@ -73,6 +73,7 @@ static int dbpageConnect(
   DbpageTable *pTab = 0;
   int rc = SQLITE_OK;
 
+  sqlite3_vtab_config(db, SQLITE_VTAB_DIRECTONLY);
   rc = sqlite3_declare_vtab(db, 
           "CREATE TABLE x(pgno INTEGER PRIMARY KEY, data BLOB, schema HIDDEN)");
   if( rc==SQLITE_OK ){
@@ -119,9 +120,8 @@ static int dbpageBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
     if( p->iColumn!=DBPAGE_COLUMN_SCHEMA ) continue;
     if( p->op!=SQLITE_INDEX_CONSTRAINT_EQ ) continue;
     if( !p->usable ){
-      /* No solution.  Use the default SQLITE_BIG_DBL cost */
-      pIdxInfo->estimatedRows = 0x7fffffff;
-      return SQLITE_OK;
+      /* No solution. */
+      return SQLITE_CONSTRAINT;
     }
     iPlan = 2;
     pIdxInfo->aConstraintUsage[i].argvIndex = 1;
@@ -313,6 +313,10 @@ static int dbpageUpdate(
   Pager *pPager;
   int szPage;
 
+  if( pTab->db->flags & SQLITE_Defensive ){
+    zErr = "read-only";
+    goto update_fail;
+  }
   if( argc==1 ){
     zErr = "cannot delete";
     goto update_fail;
@@ -369,7 +373,7 @@ static int dbpageBegin(sqlite3_vtab *pVtab){
   int i;
   for(i=0; i<db->nDb; i++){
     Btree *pBt = db->aDb[i].pBt;
-    if( pBt ) sqlite3BtreeBeginTrans(pBt, 1);
+    if( pBt ) sqlite3BtreeBeginTrans(pBt, 1, 0);
   }
   return SQLITE_OK;
 }
@@ -403,6 +407,7 @@ int sqlite3DbpageRegister(sqlite3 *db){
     0,                            /* xSavepoint */
     0,                            /* xRelease */
     0,                            /* xRollbackTo */
+    0                             /* xShadowName */
   };
   return sqlite3_create_module(db, "sqlite_dbpage", &dbpage_module, 0);
 }

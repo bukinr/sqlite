@@ -32,6 +32,8 @@ static struct MemFault {
   int nRepeat;            /* Number of times to repeat the failure */
   int nBenign;            /* Number of benign failures seen since last config */
   int nFail;              /* Number of failures seen since last config */
+  int nOkBefore;          /* Successful allocations prior to the first fault */
+  int nOkAfter;           /* Successful allocations after a fault */
   u8 enable;              /* True if enabled */
   int isInstalled;        /* True if the fault simulation layer is installed */
   int isBenignMode;       /* True if malloc failures are considered benign */
@@ -48,17 +50,31 @@ static void sqlite3Fault(void){
 }
 
 /*
+** This routine exists as a place to set a breakpoint that will
+** fire the first time any malloc() fails on a single test case.
+** The sqlite3Fault() routine above runs on every malloc() failure.
+** This routine only runs on the first such failure.
+*/
+static void sqlite3FirstFault(void){
+  static int cnt2 = 0;
+  cnt2++;
+}
+
+/*
 ** Check to see if a fault should be simulated.  Return true to simulate
 ** the fault.  Return false if the fault should not be simulated.
 */
 static int faultsimStep(void){
   if( likely(!memfault.enable) ){
+    memfault.nOkAfter++;
     return 0;
   }
   if( memfault.iCountdown>0 ){
     memfault.iCountdown--;
+    memfault.nOkBefore++;
     return 0;
   }
+  if( memfault.nFail==0 ) sqlite3FirstFault();
   sqlite3Fault();
   memfault.nFail++;
   if( memfault.isBenignMode>0 ){
@@ -96,32 +112,6 @@ static void *faultsimRealloc(void *pOld, int n){
   return p;
 }
 
-/* 
-** The following method calls are passed directly through to the underlying
-** malloc system:
-**
-**     xFree
-**     xSize
-**     xRoundup
-**     xInit
-**     xShutdown
-*/
-static void faultsimFree(void *p){
-  memfault.m.xFree(p);
-}
-static int faultsimSize(void *p){
-  return memfault.m.xSize(p);
-}
-static int faultsimRoundup(int n){
-  return memfault.m.xRoundup(n);
-}
-static int faultsimInit(void *p){
-  return memfault.m.xInit(memfault.m.pAppData);
-}
-static void faultsimShutdown(void *p){
-  memfault.m.xShutdown(memfault.m.pAppData);
-}
-
 /*
 ** This routine configures the malloc failure simulation.  After
 ** calling this routine, the next nDelay mallocs will succeed, followed
@@ -133,6 +123,8 @@ static void faultsimConfig(int nDelay, int nRepeat){
   memfault.nRepeat = nRepeat;
   memfault.nBenign = 0;
   memfault.nFail = 0;
+  memfault.nOkBefore = 0;
+  memfault.nOkAfter = 0;
   memfault.enable = nDelay>=0;
 
   /* Sometimes, when running multi-threaded tests, the isBenignMode 
@@ -186,16 +178,6 @@ static void faultsimEndBenign(void){
 ** the argument is non-zero, the 
 */
 static int faultsimInstall(int install){
-  static struct sqlite3_mem_methods m = {
-    faultsimMalloc,                   /* xMalloc */
-    faultsimFree,                     /* xFree */
-    faultsimRealloc,                  /* xRealloc */
-    faultsimSize,                     /* xSize */
-    faultsimRoundup,                  /* xRoundup */
-    faultsimInit,                     /* xInit */
-    faultsimShutdown,                 /* xShutdown */
-    0                                 /* pAppData */
-  };
   int rc;
 
   install = (install ? 1 : 0);
@@ -209,6 +191,9 @@ static int faultsimInstall(int install){
     rc = sqlite3_config(SQLITE_CONFIG_GETMALLOC, &memfault.m);
     assert(memfault.m.xMalloc);
     if( rc==SQLITE_OK ){
+      sqlite3_mem_methods m = memfault.m;
+      m.xMalloc = faultsimMalloc;
+      m.xRealloc = faultsimRealloc;
       rc = sqlite3_config(SQLITE_CONFIG_MALLOC, &m);
     }
     sqlite3_test_control(SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS, 
@@ -1383,6 +1368,7 @@ static int SQLITE_TCLAPI test_db_status(
     { "CACHE_WRITE",         SQLITE_DBSTATUS_CACHE_WRITE         },
     { "DEFERRED_FKS",        SQLITE_DBSTATUS_DEFERRED_FKS        },
     { "CACHE_USED_SHARED",   SQLITE_DBSTATUS_CACHE_USED_SHARED   },
+    { "CACHE_SPILL",         SQLITE_DBSTATUS_CACHE_SPILL         },
   };
   Tcl_Obj *pResult;
   if( objc!=4 ){

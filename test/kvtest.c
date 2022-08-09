@@ -132,7 +132,9 @@ static const char zHelp[] =
 # define access _access
 #endif
 
-#include <stdint.h>
+#if !defined(_MSC_VER)
+# include <stdint.h>
+#endif
 
 /*
 ** The following macros are used to cast pointers to integers and
@@ -557,10 +559,10 @@ static int exportMain(int argc, char **argv){
                        iKey/10000, (iKey/100)%100, iKey%100);
     }
     out = fopen(zFN, "wb");      
-    nWrote = fwrite(pData, 1, nData, out);
+    nWrote = fwrite(pData, 1, (size_t)nData, out);
     fclose(out);
     printf("\r%s   ", zTail); fflush(stdout);
-    if( nWrote!=nData ){
+    if( nWrote!=(size_t)nData ){
       fatalError("Wrote only %d of %d bytes to %s\n",
                   (int)nWrote, nData, zFN);
     }
@@ -905,7 +907,7 @@ static int runMain(int argc, char **argv){
   if( eType==PATH_DB ){
     /* Recover any prior crashes prior to starting the timer */
     sqlite3_open(zDb, &db);
-    sqlite3_exec(db, "SELECT rowid FROM sqlite_master LIMIT 1", 0, 0, 0);
+    sqlite3_exec(db, "SELECT rowid FROM sqlite_schema LIMIT 1", 0, 0, 0);
     sqlite3_close(db);
     db = 0;
   }

@@ -39,8 +39,8 @@ SQLite. Documentation follows.
     To utilise "general" case mapping, the upper() or lower() scalar 
     functions are invoked with one argument:
 
-        upper('ABC') -> 'abc'
-        lower('abc') -> 'ABC'
+        upper('abc') -> 'ABC'
+        lower('ABC') -> 'abc'
 
     To access ICU "language specific" case mapping, upper() or lower()
     should be invoked with two arguments. The second argument is the name
@@ -116,7 +116,8 @@ SQLite. Documentation follows.
   and use it as a dynamically loadable SQLite extension. To do this
   using gcc on *nix:
 
-    gcc -shared icu.c `icu-config --ldflags` -o libSqliteIcu.so
+    gcc -fPIC -shared icu.c `pkg-config --libs --cflags icu-uc icu-io` \
+        -o libSqliteIcu.so
 
   You may need to add "-I" flags so that gcc can find sqlite3ext.h
   and sqlite3.h. The resulting shared lib, libSqliteIcu.so, may be

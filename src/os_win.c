@@ -284,8 +284,7 @@ struct winFile {
   int nFetchOut;                /* Number of outstanding xFetch references */
   HANDLE hMap;                  /* Handle for accessing memory mapping */
   void *pMapRegion;             /* Area memory mapped */
-  sqlite3_int64 mmapSize;       /* Usable size of mapped region */
-  sqlite3_int64 mmapSizeActual; /* Actual size of mapped region */
+  sqlite3_int64 mmapSize;       /* Size of mapped region */
   sqlite3_int64 mmapSizeMax;    /* Configured FCNTL_MMAP_SIZE value */
 #endif
 };
@@ -313,22 +312,6 @@ struct winVfsAppData {
  */
 #ifndef SQLITE_WIN32_DBG_BUF_SIZE
 #  define SQLITE_WIN32_DBG_BUF_SIZE   ((int)(4096-sizeof(DWORD)))
-#endif
-
-/*
- * The value used with sqlite3_win32_set_directory() to specify that
- * the data directory should be changed.
- */
-#ifndef SQLITE_WIN32_DATA_DIRECTORY_TYPE
-#  define SQLITE_WIN32_DATA_DIRECTORY_TYPE (1)
-#endif
-
-/*
- * The value used with sqlite3_win32_set_directory() to specify that
- * the temporary directory should be changed.
- */
-#ifndef SQLITE_WIN32_TEMP_DIRECTORY_TYPE
-#  define SQLITE_WIN32_TEMP_DIRECTORY_TYPE (2)
 #endif
 
 /*
@@ -1307,17 +1290,17 @@ int sqlite3_win32_compact_heap(LPUINT pnLargest){
 */
 int sqlite3_win32_reset_heap(){
   int rc;
-  MUTEX_LOGIC( sqlite3_mutex *pMaster; ) /* The main static mutex */
+  MUTEX_LOGIC( sqlite3_mutex *pMainMtx; ) /* The main static mutex */
   MUTEX_LOGIC( sqlite3_mutex *pMem; )    /* The memsys static mutex */
-  MUTEX_LOGIC( pMaster = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER); )
+  MUTEX_LOGIC( pMainMtx = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MAIN); )
   MUTEX_LOGIC( pMem = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MEM); )
-  sqlite3_mutex_enter(pMaster);
+  sqlite3_mutex_enter(pMainMtx);
   sqlite3_mutex_enter(pMem);
   winMemAssertMagic();
   if( winMemGetHeap()!=NULL && winMemGetOwned() && sqlite3_memory_used()==0 ){
     /*
     ** At this point, there should be no outstanding memory allocations on
-    ** the heap.  Also, since both the master and memsys locks are currently
+    ** the heap.  Also, since both the main and memsys locks are currently
     ** being held by us, no other function (i.e. from another thread) should
     ** be able to even access the heap.  Attempt to destroy and recreate our
     ** isolated Win32 native heap now.
@@ -1340,7 +1323,7 @@ int sqlite3_win32_reset_heap(){
     rc = SQLITE_BUSY;
   }
   sqlite3_mutex_leave(pMem);
-  sqlite3_mutex_leave(pMaster);
+  sqlite3_mutex_leave(pMainMtx);
   return rc;
 }
 #endif /* SQLITE_WIN32_MALLOC */
@@ -1927,13 +1910,13 @@ char *sqlite3_win32_utf8_to_mbcs_v2(const char *zText, int useAnsi){
 }
 
 /*
-** This function sets the data directory or the temporary directory based on
-** the provided arguments.  The type argument must be 1 in order to set the
-** data directory or 2 in order to set the temporary directory.  The zValue
-** argument is the name of the directory to use.  The return value will be
-** SQLITE_OK if successful.
+** This function is the same as sqlite3_win32_set_directory (below); however,
+** it accepts a UTF-8 string.
 */
-int sqlite3_win32_set_directory(DWORD type, LPCWSTR zValue){
+int sqlite3_win32_set_directory8(
+  unsigned long type, /* Identifier for directory being set or reset */
+  const char *zValue  /* New value for directory being set or reset */
+){
   char **ppDirectory = 0;
 #ifndef SQLITE_OMIT_AUTOINIT
   int rc = sqlite3_initialize();
@@ -1949,18 +1932,51 @@ int sqlite3_win32_set_directory(DWORD type, LPCWSTR zValue){
   );
   assert( !ppDirectory || sqlite3MemdebugHasType(*ppDirectory, MEMTYPE_HEAP) );
   if( ppDirectory ){
-    char *zValueUtf8 = 0;
+    char *zCopy = 0;
     if( zValue && zValue[0] ){
-      zValueUtf8 = winUnicodeToUtf8(zValue);
-      if ( zValueUtf8==0 ){
+      zCopy = sqlite3_mprintf("%s", zValue);
+      if ( zCopy==0 ){
         return SQLITE_NOMEM_BKPT;
       }
     }
     sqlite3_free(*ppDirectory);
-    *ppDirectory = zValueUtf8;
+    *ppDirectory = zCopy;
     return SQLITE_OK;
   }
   return SQLITE_ERROR;
+}
+
+/*
+** This function is the same as sqlite3_win32_set_directory (below); however,
+** it accepts a UTF-16 string.
+*/
+int sqlite3_win32_set_directory16(
+  unsigned long type, /* Identifier for directory being set or reset */
+  const void *zValue  /* New value for directory being set or reset */
+){
+  int rc;
+  char *zUtf8 = 0;
+  if( zValue ){
+    zUtf8 = sqlite3_win32_unicode_to_utf8(zValue);
+    if( zUtf8==0 ) return SQLITE_NOMEM_BKPT;
+  }
+  rc = sqlite3_win32_set_directory8(type, zUtf8);
+  if( zUtf8 ) sqlite3_free(zUtf8);
+  return rc;
+}
+
+/*
+** This function sets the data directory or the temporary directory based on
+** the provided arguments.  The type argument must be 1 in order to set the
+** data directory or 2 in order to set the temporary directory.  The zValue
+** argument is the name of the directory to use.  The return value will be
+** SQLITE_OK if successful.
+*/
+int sqlite3_win32_set_directory(
+  unsigned long type, /* Identifier for directory being set or reset */
+  void *zValue        /* New value for directory being set or reset */
+){
+  return sqlite3_win32_set_directory16(type, zValue);
 }
 
 /*
@@ -2887,6 +2903,29 @@ static int winTruncate(sqlite3_file *id, sqlite3_int64 nByte){
   winFile *pFile = (winFile*)id;  /* File handle object */
   int rc = SQLITE_OK;             /* Return code for this function */
   DWORD lastErrno;
+#if SQLITE_MAX_MMAP_SIZE>0
+  sqlite3_int64 oldMmapSize;
+  if( pFile->nFetchOut>0 ){
+    /* File truncation is a no-op if there are outstanding memory mapped
+    ** pages.  This is because truncating the file means temporarily unmapping
+    ** the file, and that might delete memory out from under existing cursors.
+    **
+    ** This can result in incremental vacuum not truncating the file,
+    ** if there is an active read cursor when the incremental vacuum occurs.
+    ** No real harm comes of this - the database file is not corrupted,
+    ** though some folks might complain that the file is bigger than it
+    ** needs to be.
+    **
+    ** The only feasible work-around is to defer the truncation until after
+    ** all references to memory-mapped content are closed.  That is doable,
+    ** but involves adding a few branches in the common write code path which
+    ** could slow down normal operations slightly.  Hence, we have decided for
+    ** now to simply make trancations a no-op if there are pending reads.  We
+    ** can maybe revisit this decision in the future.
+    */
+    return SQLITE_OK;
+  }
+#endif
 
   assert( pFile );
   SimulateIOError(return SQLITE_IOERR_TRUNCATE);
@@ -2902,6 +2941,15 @@ static int winTruncate(sqlite3_file *id, sqlite3_int64 nByte){
     nByte = ((nByte + pFile->szChunk - 1)/pFile->szChunk) * pFile->szChunk;
   }
 
+#if SQLITE_MAX_MMAP_SIZE>0
+  if( pFile->pMapRegion ){
+    oldMmapSize = pFile->mmapSize;
+  }else{
+    oldMmapSize = 0;
+  }
+  winUnmapfile(pFile);
+#endif
+
   /* SetEndOfFile() returns non-zero when successful, or zero when it fails. */
   if( winSeekFile(pFile, nByte) ){
     rc = winLogError(SQLITE_IOERR_TRUNCATE, pFile->lastErrno,
@@ -2914,12 +2962,12 @@ static int winTruncate(sqlite3_file *id, sqlite3_int64 nByte){
   }
 
 #if SQLITE_MAX_MMAP_SIZE>0
-  /* If the file was truncated to a size smaller than the currently
-  ** mapped region, reduce the effective mapping size as well. SQLite will
-  ** use read() and write() to access data beyond this point from now on.
-  */
-  if( pFile->pMapRegion && nByte<pFile->mmapSize ){
-    pFile->mmapSize = nByte;
+  if( rc==SQLITE_OK && oldMmapSize>0 ){
+    if( oldMmapSize>nByte ){
+      winMapfile(pFile, -1);
+    }else{
+      winMapfile(pFile, oldMmapSize);
+    }
   }
 #endif
 
@@ -3454,6 +3502,7 @@ static void winModeBit(winFile *pFile, unsigned char mask, int *pArg){
 /* Forward references to VFS helper methods used for temporary files */
 static int winGetTempname(sqlite3_vfs *, char **);
 static int winIsDir(const void *);
+static BOOL winIsLongPathPrefix(const char *);
 static BOOL winIsDriveLetterAndColon(const char *);
 
 /*
@@ -3631,15 +3680,16 @@ static SYSTEM_INFO winSysInfo;
 **     assert( winShmMutexHeld() );
 **   winShmLeaveMutex()
 */
+static sqlite3_mutex *winBigLock = 0;
 static void winShmEnterMutex(void){
-  sqlite3_mutex_enter(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1));
+  sqlite3_mutex_enter(winBigLock);
 }
 static void winShmLeaveMutex(void){
-  sqlite3_mutex_leave(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1));
+  sqlite3_mutex_leave(winBigLock);
 }
 #ifndef NDEBUG
 static int winShmMutexHeld(void) {
-  return sqlite3_mutex_held(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1));
+  return sqlite3_mutex_held(winBigLock);
 }
 #endif
 
@@ -4166,6 +4216,7 @@ static int winShmMap(
     rc = winOpenSharedMemory(pDbFd);
     if( rc!=SQLITE_OK ) return rc;
     pShm = pDbFd->pShm;
+    assert( pShm!=0 );
   }
   pShmNode = pShm->pShmNode;
 
@@ -4304,9 +4355,9 @@ shmpage_out:
 static int winUnmapfile(winFile *pFile){
   assert( pFile!=0 );
   OSTRACE(("UNMAP-FILE pid=%lu, pFile=%p, hMap=%p, pMapRegion=%p, "
-           "mmapSize=%lld, mmapSizeActual=%lld, mmapSizeMax=%lld\n",
+           "mmapSize=%lld, mmapSizeMax=%lld\n",
            osGetCurrentProcessId(), pFile, pFile->hMap, pFile->pMapRegion,
-           pFile->mmapSize, pFile->mmapSizeActual, pFile->mmapSizeMax));
+           pFile->mmapSize, pFile->mmapSizeMax));
   if( pFile->pMapRegion ){
     if( !osUnmapViewOfFile(pFile->pMapRegion) ){
       pFile->lastErrno = osGetLastError();
@@ -4318,7 +4369,6 @@ static int winUnmapfile(winFile *pFile){
     }
     pFile->pMapRegion = 0;
     pFile->mmapSize = 0;
-    pFile->mmapSizeActual = 0;
   }
   if( pFile->hMap!=NULL ){
     if( !osCloseHandle(pFile->hMap) ){
@@ -4429,7 +4479,6 @@ static int winMapfile(winFile *pFd, sqlite3_int64 nByte){
     }
     pFd->pMapRegion = pNew;
     pFd->mmapSize = nMap;
-    pFd->mmapSizeActual = nMap;
   }
 
   OSTRACE(("MAP-FILE pid=%lu, pFile=%p, rc=SQLITE_OK\n",
@@ -4470,6 +4519,7 @@ static int winFetch(sqlite3_file *fd, i64 iOff, int nAmt, void **pp){
       }
     }
     if( pFd->mmapSize >= iOff+nAmt ){
+      assert( pFd->pMapRegion!=0 );
       *pp = &((u8 *)pFd->pMapRegion)[iOff];
       pFd->nFetchOut++;
     }
@@ -4973,7 +5023,7 @@ static int winOpen(
 
 #ifndef NDEBUG
   int isOpenJournal = (isCreate && (
-        eType==SQLITE_OPEN_MASTER_JOURNAL
+        eType==SQLITE_OPEN_SUPER_JOURNAL
      || eType==SQLITE_OPEN_MAIN_JOURNAL
      || eType==SQLITE_OPEN_WAL
   ));
@@ -4994,17 +5044,17 @@ static int winOpen(
   assert(isExclusive==0 || isCreate);
   assert(isDelete==0 || isCreate);
 
-  /* The main DB, main journal, WAL file and master journal are never
+  /* The main DB, main journal, WAL file and super-journal are never
   ** automatically deleted. Nor are they ever temporary files.  */
   assert( (!isDelete && zName) || eType!=SQLITE_OPEN_MAIN_DB );
   assert( (!isDelete && zName) || eType!=SQLITE_OPEN_MAIN_JOURNAL );
-  assert( (!isDelete && zName) || eType!=SQLITE_OPEN_MASTER_JOURNAL );
+  assert( (!isDelete && zName) || eType!=SQLITE_OPEN_SUPER_JOURNAL );
   assert( (!isDelete && zName) || eType!=SQLITE_OPEN_WAL );
 
   /* Assert that the upper layer has set one of the "file-type" flags. */
   assert( eType==SQLITE_OPEN_MAIN_DB      || eType==SQLITE_OPEN_TEMP_DB
        || eType==SQLITE_OPEN_MAIN_JOURNAL || eType==SQLITE_OPEN_TEMP_JOURNAL
-       || eType==SQLITE_OPEN_SUBJOURNAL   || eType==SQLITE_OPEN_MASTER_JOURNAL
+       || eType==SQLITE_OPEN_SUBJOURNAL   || eType==SQLITE_OPEN_SUPER_JOURNAL
        || eType==SQLITE_OPEN_TRANSIENT_DB || eType==SQLITE_OPEN_WAL
   );
 
@@ -5076,7 +5126,11 @@ static int winOpen(
     dwCreationDisposition = OPEN_EXISTING;
   }
 
-  dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  if( 0==sqlite3_uri_boolean(zName, "exclusive", 0) ){
+    dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  }else{
+    dwShareMode = 0;
+  }
 
   if( isDelete ){
 #if SQLITE_OS_WINCE
@@ -5216,13 +5270,15 @@ static int winOpen(
   }
 
   sqlite3_free(zTmpname);
-  pFile->pMethod = pAppData ? pAppData->pMethod : &winIoMethod;
+  id->pMethods = pAppData ? pAppData->pMethod : &winIoMethod;
   pFile->pVfs = pVfs;
   pFile->h = h;
   if( isReadonly ){
     pFile->ctrlFlags |= WINFILE_RDONLY;
   }
-  if( sqlite3_uri_boolean(zName, "psow", SQLITE_POWERSAFE_OVERWRITE) ){
+  if( (flags & SQLITE_OPEN_MAIN_DB)
+   && sqlite3_uri_boolean(zName, "psow", SQLITE_POWERSAFE_OVERWRITE) 
+  ){
     pFile->ctrlFlags |= WINFILE_PSOW;
   }
   pFile->lastErrno = NO_ERROR;
@@ -5231,7 +5287,6 @@ static int winOpen(
   pFile->hMap = NULL;
   pFile->pMapRegion = 0;
   pFile->mmapSize = 0;
-  pFile->mmapSizeActual = 0;
   pFile->mmapSizeMax = sqlite3GlobalConfig.szMmap;
 #endif
 
@@ -5434,6 +5489,17 @@ static int winAccess(
 }
 
 /*
+** Returns non-zero if the specified path name starts with the "long path"
+** prefix.
+*/
+static BOOL winIsLongPathPrefix(
+  const char *zPathname
+){
+  return ( zPathname[0]=='\\' && zPathname[1]=='\\'
+        && zPathname[2]=='?'  && zPathname[3]=='\\' );
+}
+
+/*
 ** Returns non-zero if the specified path name starts with a drive letter
 ** followed by a colon character.
 */
@@ -5497,10 +5563,11 @@ static int winFullPathname(
   char *zOut;
 #endif
 
-  /* If this path name begins with "/X:", where "X" is any alphabetic
-  ** character, discard the initial "/" from the pathname.
+  /* If this path name begins with "/X:" or "\\?\", where "X" is any
+  ** alphabetic character, discard the initial "/" from the pathname.
   */
-  if( zRelative[0]=='/' && winIsDriveLetterAndColon(zRelative+1) ){
+  if( zRelative[0]=='/' && (winIsDriveLetterAndColon(zRelative+1)
+       || winIsLongPathPrefix(zRelative+1)) ){
     zRelative++;
   }
 
@@ -6062,6 +6129,10 @@ int sqlite3_os_init(void){
   sqlite3_vfs_register(&winLongPathNolockVfs, 0);
 #endif
 
+#ifndef SQLITE_OMIT_WAL
+  winBigLock = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_VFS1);
+#endif
+
   return SQLITE_OK;
 }
 
@@ -6072,6 +6143,11 @@ int sqlite3_os_end(void){
     sleepObj = NULL;
   }
 #endif
+
+#ifndef SQLITE_OMIT_WAL
+  winBigLock = 0;
+#endif
+
   return SQLITE_OK;
 }
 

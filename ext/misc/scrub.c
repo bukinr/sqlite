@@ -131,7 +131,7 @@ static void scrubBackupWrite(ScrubState *p, int pgno, const u8 *pData){
     scrubBackupErr(p, "write failed for page %d", pgno);
     p->rcErr = SQLITE_IOERR;
   }
-  if( pgno>p->iLastPage ) p->iLastPage = pgno;
+  if( (u32)pgno>p->iLastPage ) p->iLastPage = pgno;
 }
 
 /* Prepare a statement against the "db" database. */
@@ -166,7 +166,7 @@ static void scrubBackupOpenSrc(ScrubState *p){
                       sqlite3_errmsg(p->dbSrc));
     return;
   }
-  p->rcErr = sqlite3_exec(p->dbSrc, "SELECT 1 FROM sqlite_master; BEGIN;",
+  p->rcErr = sqlite3_exec(p->dbSrc, "SELECT 1 FROM sqlite_schema; BEGIN;",
                           0, 0, 0);
   if( p->rcErr ){
     scrubBackupErr(p,
@@ -459,7 +459,7 @@ static void scrubBackupBtree(ScrubState *p, int pgno, int iDepth){
     nLocal = K<=X ? K : M;
     if( pc+nLocal > p->szUsable-4 ){ ln=__LINE__; goto btree_corrupt; }
     iChild = scrubBackupInt32(&a[pc+nLocal]);
-    scrubBackupOverflow(p, iChild, P-nLocal);
+    scrubBackupOverflow(p, iChild, (u32)(P-nLocal));
   }
 
   /* Walk the right-most tree */
@@ -535,7 +535,7 @@ int sqlite3_scrub_backup(
   /* Copy all of the btrees */
   scrubBackupBtree(&s, 1, 0);
   pStmt = scrubBackupPrepare(&s, s.dbSrc,
-       "SELECT rootpage FROM sqlite_master WHERE coalesce(rootpage,0)>0");
+       "SELECT rootpage FROM sqlite_schema WHERE coalesce(rootpage,0)>0");
   if( pStmt==0 ) goto scrub_abort;
   while( sqlite3_step(pStmt)==SQLITE_ROW ){
     i = (u32)sqlite3_column_int(pStmt, 0);
