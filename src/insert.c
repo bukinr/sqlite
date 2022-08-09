@@ -358,7 +358,7 @@ static int autoIncBegin(
     ** Ticket d8dc2b3a58cd5dc2918a1d4acb 2018-05-23 */
     if( pSeqTab==0
      || !HasRowid(pSeqTab)
-     || IsVirtual(pSeqTab)
+     || NEVER(IsVirtual(pSeqTab))
      || pSeqTab->nCol!=2
     ){
       pParse->nErr++;
@@ -817,7 +817,7 @@ void sqlite3Insert(
           bIdListInOrder = 0;
         }else{
           sqlite3ErrorMsg(pParse, "table %S has no column named %s",
-              pTabList, 0, pColumn->a[i].zName);
+              pTabList->a, pColumn->a[i].zName);
           pParse->checkSchema = 1;
           goto insert_cleanup;
         }
@@ -945,7 +945,7 @@ void sqlite3Insert(
     if( nColumn!=(pTab->nCol-nHidden) ){
       sqlite3ErrorMsg(pParse, 
          "table %S has %d columns but %d values were supplied",
-         pTabList, 0, pTab->nCol-nHidden, nColumn);
+         pTabList->a, pTab->nCol-nHidden, nColumn);
      goto insert_cleanup;
     }
   }
@@ -1004,7 +1004,9 @@ void sqlite3Insert(
       pNx->iDataCur = iDataCur;
       pNx->iIdxCur = iIdxCur;
       if( pNx->pUpsertTarget ){
-        sqlite3UpsertAnalyzeTarget(pParse, pTabList, pNx);
+        if( sqlite3UpsertAnalyzeTarget(pParse, pTabList, pNx) ){
+          goto insert_cleanup;
+        }
       }
       pNx = pNx->pNextUpsert;
     }while( pNx!=0 );
@@ -1246,7 +1248,7 @@ void sqlite3Insert(
     }else
 #endif
     {
-      int isReplace;    /* Set to true if constraints may cause a replace */
+      int isReplace = 0;/* Set to true if constraints may cause a replace */
       int bUseSeek;     /* True to use OPFLAG_SEEKRESULT */
       sqlite3GenerateConstraintChecks(pParse, pTab, aRegIdx, iDataCur, iIdxCur,
           regIns, 0, ipkColumn>=0, onError, endOfLoop, &isReplace, 0, pUpsert
@@ -1266,6 +1268,13 @@ void sqlite3Insert(
           regIns, aRegIdx, 0, appendFlag, bUseSeek
       );
     }
+#ifdef SQLITE_ALLOW_ROWID_IN_VIEW
+  }else if( pParse->bReturning ){
+    /* If there is a RETURNING clause, populate the rowid register with
+    ** constant value -1, in case one or more of the returned expressions
+    ** refer to the "rowid" of the view.  */
+    sqlite3VdbeAddOp2(v, OP_Integer, -1, regRowid);
+#endif
   }
 
   /* Update the count of rows that are inserted
@@ -2426,7 +2435,7 @@ static void codeWithoutRowidPreupdate(
   Vdbe *v = pParse->pVdbe;
   int r = sqlite3GetTempReg(pParse);
   assert( !HasRowid(pTab) );
-  assert( 0==(pParse->db->mDbFlags & DBFLAG_Vacuum) );
+  assert( 0==(pParse->db->mDbFlags & DBFLAG_Vacuum) || CORRUPT_DB );
   sqlite3VdbeAddOp2(v, OP_Integer, 0, r);
   sqlite3VdbeAddOp4(v, OP_Insert, iCur, regData, r, (char*)pTab, P4_TABLE);
   sqlite3VdbeChangeP5(v, OPFLAG_ISNOOP);

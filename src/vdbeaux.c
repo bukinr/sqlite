@@ -1487,11 +1487,7 @@ char *sqlite3VdbeDisplayComment(
     char c;
     zSynopsis = zOpName += nOpName + 1;
     if( strncmp(zSynopsis,"IF ",3)==0 ){
-      if( pOp->p5 & SQLITE_STOREP2 ){
-        sqlite3_snprintf(sizeof(zAlt), zAlt, "r[P2] = (%s)", zSynopsis+3);
-      }else{
-        sqlite3_snprintf(sizeof(zAlt), zAlt, "if %s goto P2", zSynopsis+3);
-      }
+      sqlite3_snprintf(sizeof(zAlt), zAlt, "if %s goto P2", zSynopsis+3);
       zSynopsis = zAlt;
     }
     for(ii=0; (c = zSynopsis[ii])!=0; ii++){
@@ -2474,20 +2470,15 @@ void sqlite3VdbeFreeCursor(Vdbe *p, VdbeCursor *pCx){
     return;
   }
   assert( pCx->pBtx==0 || pCx->eCurType==CURTYPE_BTREE );
+  assert( pCx->pBtx==0 || pCx->isEphemeral );
   switch( pCx->eCurType ){
     case CURTYPE_SORTER: {
       sqlite3VdbeSorterClose(p->db, pCx);
       break;
     }
     case CURTYPE_BTREE: {
-      if( pCx->isEphemeral ){
-        if( pCx->pBtx ) sqlite3BtreeClose(pCx->pBtx);
-        /* The pCx->pCursor will be close automatically, if it exists, by
-        ** the call above. */
-      }else{
-        assert( pCx->uc.pCursor!=0 );
-        sqlite3BtreeCloseCursor(pCx->uc.pCursor);
-      }
+      assert( pCx->uc.pCursor!=0 );
+      sqlite3BtreeCloseCursor(pCx->uc.pCursor);
       break;
     }
 #ifndef SQLITE_OMIT_VIRTUALTABLE
@@ -3572,6 +3563,7 @@ int sqlite3VdbeCursorMoveto(VdbeCursor **pp, u32 *piCol){
   assert( p->eCurType==CURTYPE_BTREE || p->eCurType==CURTYPE_PSEUDO );
   if( p->deferredMoveto ){
     u32 iMap;
+    assert( !p->isEphemeral );
     if( p->aAltMap && (iMap = p->aAltMap[1+*piCol])>0 && !p->nullRow ){
       *pp = p->pAltCursor;
       *piCol = iMap - 1;
@@ -5201,7 +5193,8 @@ void sqlite3VdbePreUpdateHook(
   const char *zDb,                /* Database name */
   Table *pTab,                    /* Modified table */
   i64 iKey1,                      /* Initial key value */
-  int iReg                        /* Register for new.* record */
+  int iReg,                       /* Register for new.* record */
+  int iBlobWrite
 ){
   sqlite3 *db = v->db;
   i64 iKey2;
@@ -5237,6 +5230,7 @@ void sqlite3VdbePreUpdateHook(
   preupdate.iKey1 = iKey1;
   preupdate.iKey2 = iKey2;
   preupdate.pTab = pTab;
+  preupdate.iBlobWrite = iBlobWrite;
 
   db->pPreUpdate = &preupdate;
   db->xPreUpdateCallback(db->pPreUpdateArg, db, op, zDb, zTbl, iKey1, iKey2);
